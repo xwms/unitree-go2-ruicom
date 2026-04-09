@@ -1,2 +1,11 @@
 build/
 repomix-output.xml
+.claude
+dataset/safety_signs_dataset/datasets
+dataset/safety_signs_dataset/data.yaml
+dataset/safety_signs_dataset/*.pt
+dataset/safety_signs_dataset/runs/detect/predict*
+dataset/safety_signs_dataset/runs/detect/val*
+dataset/safety_signs_dataset/runs/detect/train3/train_batch*
+dataset/safety_signs_dataset/runs/detect/train3/val_batch0*
+src/test_yolo.cpp

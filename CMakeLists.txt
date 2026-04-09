@@ -11,23 +11,63 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-set(UNITREE_SDK_PATH ${CMAKE_SOURCE_DIR}/unitree_sdk2/lib/${CMAKE_SYSTEM_PROCESSOR})
-set(DDS_LIB_PATH ${CMAKE_SOURCE_DIR}/unitree_sdk2/thirdparty/lib/${CMAKE_SYSTEM_PROCESSOR})
-find_library(UNITREE_SDK_LIB unitree_sdk2 PATHS ${UNITREE_SDK_PATH} NO_DEFAULT_PATH)
+# Try to find unitree_sdk2 in system paths
+find_library(UNITREE_SDK_LIB unitree_sdk2
+  PATHS
+    /usr/local/lib
+    /usr/lib
+    ${CMAKE_SOURCE_DIR}/unitree_sdk2/lib/${CMAKE_SYSTEM_PROCESSOR}
+)
+
+# Try to find DDS libraries
+find_library(DDSC_LIB ddsc
+  PATHS
+    /usr/local/lib
+    /usr/lib
+    ${CMAKE_SOURCE_DIR}/unitree_sdk2/thirdparty/lib/${CMAKE_SYSTEM_PROCESSOR}
+)
+
+find_library(DDSCXX_LIB ddscxx
+  PATHS
+    /usr/local/lib
+    /usr/lib
+    ${CMAKE_SOURCE_DIR}/unitree_sdk2/thirdparty/lib/${CMAKE_SYSTEM_PROCESSOR}
+)
 
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED)
 
-add_library(ddsc SHARED IMPORTED GLOBAL)
-set_target_properties(ddsc PROPERTIES IMPORTED_LOCATION ${DDS_LIB_PATH}/libddsc.so)
+if(DDSC_LIB)
+  add_library(ddsc SHARED IMPORTED GLOBAL)
+  set_target_properties(ddsc PROPERTIES IMPORTED_LOCATION ${DDSC_LIB})
+else()
+  message(FATAL_ERROR "DDS library ddsc not found")
+endif()
 
-add_library(ddscxx SHARED IMPORTED GLOBAL)
-set_target_properties(ddscxx PROPERTIES IMPORTED_LOCATION ${DDS_LIB_PATH}/libddscxx.so)
+if(DDSCXX_LIB)
+  add_library(ddscxx SHARED IMPORTED GLOBAL)
+  set_target_properties(ddscxx PROPERTIES IMPORTED_LOCATION ${DDSCXX_LIB})
+else()
+  message(FATAL_ERROR "DDS library ddscxx not found")
+endif()
+
+if(UNITREE_SDK_LIB)
+  add_library(unitree_sdk2 SHARED IMPORTED GLOBAL)
+  set_target_properties(unitree_sdk2 PROPERTIES IMPORTED_LOCATION ${UNITREE_SDK_LIB})
+else()
+  message(FATAL_ERROR "Unitree SDK2 library not found")
+endif()
 
 include_directories(${CMAKE_SOURCE_DIR}/unitree_sdk2/include)
 include_directories(${CMAKE_SOURCE_DIR}/unitree_sdk2/thirdparty/include)
 include_directories(${CMAKE_SOURCE_DIR}/unitree_sdk2/thirdparty/include/ddscxx)
 include_directories(${CMAKE_SOURCE_DIR}/include)
+
+# Add system DDS include paths if they exist
+include_directories(/usr/local/include/ddscxx)
+include_directories(/usr/local/include/ddsc)
+include_directories(/usr/include/ddscxx)
+include_directories(/usr/include/ddsc)
 
 # LineProcessor library
 add_library(LineProcessor src/LineProcessor.cpp)
@@ -40,3 +80,26 @@ target_link_libraries(go2_video_client unitree_sdk2 ddsc ddscxx ${OpenCV_LIBS} T
 # Interactive sport client
 add_executable(go2_sport_interactive src/go2_sport_interactive.cpp)
 target_link_libraries(go2_sport_interactive unitree_sdk2 ddsc ddscxx Threads::Threads)
+
+# YOLO detector library
+add_library(YOLODetector src/YOLODetector.cpp)
+target_include_directories(YOLODetector PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(YOLODetector ${OpenCV_LIBS})
+
+# Safety sign detection main program
+add_executable(go2_safety_detection src/go2_safety_detection.cpp)
+target_link_libraries(go2_safety_detection
+    YOLODetector
+    unitree_sdk2
+    ddsc
+    ddscxx
+    ${OpenCV_LIBS}
+    Threads::Threads
+)
+
+# Test program for YOLO detector
+# add_executable(test_yolo src/test_yolo.cpp)
+# target_link_libraries(test_yolo
+#     YOLODetector
+#     ${OpenCV_LIBS}
+# )
