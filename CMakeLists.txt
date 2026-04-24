@@ -36,6 +36,7 @@ find_library(DDSCXX_LIB ddscxx
 
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(realsense2 REQUIRED)
 
 if(DDSC_LIB)
   add_library(ddsc SHARED IMPORTED GLOBAL)
@@ -76,6 +77,17 @@ target_link_libraries(LineProcessor ${OpenCV_LIBS})
 # ONNXDetector library
 add_library(ONNXDetector src/ONNXDetector.cpp)
 target_link_libraries(ONNXDetector ${OpenCV_LIBS})
+# Line following executable
+add_executable(go2_line_following src/go2_line_following.cpp)
+target_link_libraries(go2_line_following 
+    LineProcessor
+    unitree_sdk2 
+    ddsc 
+    ddscxx 
+    ${OpenCV_LIBS} 
+    Threads::Threads 
+    realsense2::realsense2
+)
 
 # Example executable
 add_executable(go2_video_client src/go2_video_client.cpp)
@@ -88,3 +100,11 @@ target_link_libraries(go2_sport_interactive unitree_sdk2 ddsc ddscxx Threads::Th
 # Vision detection client
 add_executable(go2_vision_detection src/go2_vision_detection.cpp)
 target_link_libraries(go2_vision_detection unitree_sdk2 ddsc ddscxx ${OpenCV_LIBS} Threads::Threads LineProcessor ONNXDetector)
+
+# Light controller
+add_executable(go2_light_controller src/go2_light_controller.cpp)
+target_link_libraries(go2_light_controller unitree_sdk2 ddsc ddscxx Threads::Threads)
+
+# Obstacles avoidance
+add_executable(go2_obstacles_avoid src/go2_obstacles_avoid.cpp)
+target_link_libraries(go2_obstacles_avoid unitree_sdk2 ddsc ddscxx ${OpenCV_LIBS} Threads::Threads)

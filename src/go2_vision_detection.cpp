@@ -1,3 +1,15 @@
+/**
+ * @file go2_vision_detection.cpp
+ * @brief 基于 ONNX 模型的 Go2 机器人实时安全标识检测与动作响应主程序
+ *
+ * @par 使用说明
+ *       go2_vision_detection <onnx_model_path> [classes_file] [network_interface]
+ *       示例: ./go2_vision_detection safety_signs.onnx classes.txt eth0
+ *       功能: 实时获取 Go2 机器人相机视频流，通过 ONNX 模型检测安全图标，
+ *             根据检测结果自动触发机器人动作（伸懒腰、打招呼、闪灯）。
+ *       控制: [q/Esc] 退出程序
+ */
+
 #include <unitree/robot/go2/video/video_client.hpp>
 #include <unitree/robot/go2/sport/sport_client.hpp>
 #include <unitree/robot/go2/vui/vui_client.hpp>
@@ -13,45 +25,54 @@
 #include "LineProcessor.hpp"
 #include "ONNXDetector.hpp"
 
+/**
+ * @brief Go2 机器人视觉检测控制器，集成视频流获取、ONNX 推理和动作控制
+ */
 class Go2VisionController {
 public:
+    /**
+     * @brief 构造函数，初始化机器人客户端并加载 ONNX 模型
+     * @param onnxModelPath ONNX 模型文件路径
+     * @param classesPath 类别名称文本文件路径（可选）
+     * @param netInterface 网络接口名称，如 eth0、wlan0（可选）
+     */
     Go2VisionController(const std::string& onnxModelPath,
                         const std::string& classesPath = "",
                         const std::string& netInterface = "")
         : isRunning_(false)
         , lastDetectionTime_(std::chrono::steady_clock::now())
-        , detectionCooldown_(2000) // 2 seconds cooldown between actions
+        , detectionCooldown_(2000) // 动作触发冷却时间 2 秒，防止重复触发
     {
-        // Initialize network interface
+        // 初始化网络接口
         if (!netInterface.empty()) {
             unitree::robot::ChannelFactory::Instance()->Init(0, netInterface);
         } else {
             unitree::robot::ChannelFactory::Instance()->Init(0);
         }
 
-        // Initialize video client
+        // 初始化视频客户端
         videoClient_.SetTimeout(1.0f);
         videoClient_.Init();
 
-        // Initialize sport client
+        // 初始化运动控制客户端
         sportClient_.SetTimeout(10.0f);
         sportClient_.Init();
 
-        // Initialize vui client for light control
+        // 初始化 VUI 客户端（用于前灯控制）
         vuiClient_.SetTimeout(1.0f);
         vuiClient_.Init();
 
-        // Load ONNX model with optional class names file
+        // 加载 ONNX 模型及可选类别文件
         if (!detector_.loadModel(onnxModelPath, classesPath)) {
-            throw std::runtime_error("Failed to load ONNX model: " + onnxModelPath);
+            throw std::runtime_error("加载 ONNX 模型失败: " + onnxModelPath);
         }
 
-        // Set detection thresholds
+        // 设置检测阈值
         detector_.setConfidenceThreshold(0.6f);
         detector_.setNMSThreshold(0.4f);
 
-        std::cout << "Go2 Vision Controller initialized successfully" << std::endl;
-        std::cout << "Loaded classes: ";
+        std::cout << "Go2 视觉控制器初始化成功" << std::endl;
+        std::cout << "已加载类别: ";
         auto classes = detector_.getClassNames();
         for (const auto& className : classes) {
             std::cout << className << " ";
@@ -59,10 +80,13 @@ public:
         std::cout << std::endl;
     }
 
+    /**
+     * @brief 主循环：持续获取视频帧并进行检测，直到收到退出信号
+     */
     void run() {
         isRunning_ = true;
         cv::namedWindow("Go2 Vision Detection", cv::WINDOW_AUTOSIZE);
-        std::cout << "Vision detection started. Press 'q' to quit." << std::endl;
+        std::cout << "视觉检测已启动。按 'q' 键退出。" << std::endl;
 
         std::vector<uint8_t> imageSample;
         LineProcessor lineProcessor;
@@ -75,29 +99,29 @@ public:
                 cv::Mat frame = cv::imdecode(rawData, cv::IMREAD_COLOR);
 
                 if (!frame.empty()) {
-                    // Process frame with LineProcessor
+                    // 使用 LineProcessor 进行图像增强预处理
                     cv::Mat processedFrame = lineProcessor.process(imageSample);
 
-                    // Detect safety signs
+                    // 执行 ONNX 目标检测
                     auto detections = detector_.detect(frame);
 
-                    // Draw detections on frame (with bounding boxes)
+                    // 在图像上绘制检测结果（边界框和标签）
                     detector_.drawDetections(frame, detections);
 
-                    // Display frame
+                    // 显示检测画面
                     cv::imshow("Go2 Vision Detection", frame);
 
-                    // Handle detections and trigger actions
+                    // 根据检测结果触发机器人动作
                     handleDetections(detections);
 
-                    // Check for quit key
+                    // 检测退出按键
                     char key = (char)cv::waitKey(1);
                     if (key == 'q' || key == 27) {
                         stop();
                     }
                 }
             } else {
-                // Check for quit key even when no frame
+                // 无帧时仍响应退出按键
                 if ((char)cv::waitKey(1) == 'q') {
                     stop();
                 }
@@ -107,11 +131,18 @@ public:
         cv::destroyAllWindows();
     }
 
+    /**
+     * @brief 停止主循环
+     */
     void stop() {
         isRunning_ = false;
     }
 
 private:
+    /**
+     * @brief 处理检测结果，根据检测到的安全标识触发对应机器人动作
+     * @param detections 检测结果列表
+     */
     void handleDetections(const std::vector<DetectionResult>& detections) {
         if (detections.empty()) {
             return;
@@ -121,12 +152,12 @@ private:
         auto timeSinceLastDetection = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - lastDetectionTime_).count();
 
-        // Apply cooldown to prevent rapid repeated actions
+        // 冷却检查：防止频繁重复触发动作
         if (timeSinceLastDetection < detectionCooldown_) {
             return;
         }
 
-        // Find the detection with highest confidence
+        // 找出置信度最高的检测结果
         std::string highestClass;
         float highestConfidence = 0.0f;
 
@@ -137,9 +168,9 @@ private:
             }
         }
 
-        // Trigger action based on detected class
+        // 根据检测到的类别触发对应动作
         if (highestConfidence > 0.6f) {
-            std::cout << "Detected: " << highestClass << " with confidence: "
+            std::cout << "检测到: " << highestClass << " 置信度: "
                       << (highestConfidence * 100) << "%" << std::endl;
 
             if (highestClass == "caution_shock") {
@@ -155,84 +186,99 @@ private:
         }
     }
 
+    /**
+     * @brief 执行伸懒腰动作（对应电击警示标识）
+     */
     void performStretch() {
-        std::cout << ">>> Performing Stretch (伸懒腰) action" << std::endl;
+        std::cout << ">>> 执行伸懒腰动作" << std::endl;
         try {
             sportClient_.Stretch();
-            std::cout << ">>> Stretch action completed" << std::endl;
+            std::cout << ">>> 伸懒腰动作完成" << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "!!! Failed to perform Stretch: " << e.what() << std::endl;
+            std::cerr << "!!! 伸懒腰动作失败: " << e.what() << std::endl;
         }
     }
 
+    /**
+     * @brief 执行打招呼动作（对应氧化剂警示标识）
+     */
     void performHello() {
-        std::cout << ">>> Performing Hello (打招呼) action" << std::endl;
+        std::cout << ">>> 执行打招呼动作" << std::endl;
         try {
             sportClient_.Hello();
-            std::cout << ">>> Hello action completed" << std::endl;
+            std::cout << ">>> 打招呼动作完成" << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "!!! Failed to perform Hello: " << e.what() << std::endl;
+            std::cerr << "!!! 打招呼动作失败: " << e.what() << std::endl;
         }
     }
 
+    /**
+     * @brief 闪烁前灯三次（对应辐射警示标识）
+     */
     void flashFrontLights() {
-        std::cout << ">>> Flashing front lights 3 times" << std::endl;
+        std::cout << ">>> 开始闪烁前灯 3 次" << std::endl;
 
         try {
-            // Flash lights 3 times
+            // 循环闪烁前灯 3 次
             for (int i = 0; i < 3; ++i) {
-                // Turn lights on (brightness level 10 - maximum)
+                // 开灯（亮度等级 10，最大值）
                 int ret = vuiClient_.SetBrightness(10);
                 if (ret != 0) {
-                    std::cerr << "!!! Failed to turn lights on: error code " << ret << std::endl;
+                    std::cerr << "!!! 开灯失败，错误码: " << ret << std::endl;
                 } else {
-                    std::cout << "   Flash " << (i + 1) << " - Lights ON" << std::endl;
+                    std::cout << "   第 " << (i + 1) << " 次闪烁 - 灯亮" << std::endl;
                 }
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-                // Turn lights off (brightness level 0)
+                // 关灯（亮度等级 0）
                 ret = vuiClient_.SetBrightness(0);
                 if (ret != 0) {
-                    std::cerr << "!!! Failed to turn lights off: error code " << ret << std::endl;
+                    std::cerr << "!!! 关灯失败，错误码: " << ret << std::endl;
                 } else {
-                    std::cout << "   Flash " << (i + 1) << " - Lights OFF" << std::endl;
+                    std::cout << "   第 " << (i + 1) << " 次闪烁 - 灯灭" << std::endl;
                 }
 
-                // Wait between flashes (except after last one)
+                // 最后一次闪烁后不再等待
                 if (i < 2) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(300));
                 }
             }
 
-            std::cout << ">>> Front lights flashing completed" << std::endl;
+            std::cout << ">>> 前灯闪烁完成" << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "!!! Failed to flash lights: " << e.what() << std::endl;
+            std::cerr << "!!! 前灯闪烁失败: " << e.what() << std::endl;
         }
     }
 
 private:
-    unitree::robot::go2::VideoClient videoClient_;
-    unitree::robot::go2::SportClient sportClient_;
-    unitree::robot::go2::VuiClient vuiClient_;
-    ONNXDetector detector_;
+    unitree::robot::go2::VideoClient videoClient_; ///< 视频流客户端
+    unitree::robot::go2::SportClient sportClient_; ///< 运动控制客户端
+    unitree::robot::go2::VuiClient vuiClient_;     ///< VUI 客户端（前灯控制）
+    ONNXDetector detector_;                        ///< ONNX 模型推理器
 
-    std::atomic<bool> isRunning_;
-    std::chrono::steady_clock::time_point lastDetectionTime_;
-    const int detectionCooldown_; // milliseconds
+    std::atomic<bool> isRunning_;                                    ///< 主循环运行标志
+    std::chrono::steady_clock::time_point lastDetectionTime_;        ///< 上次检测触发时间
+    const int detectionCooldown_;                                    ///< 动作触发冷却时间（毫秒）
 
-    std::mutex actionMutex_;
+    std::mutex actionMutex_; ///< 动作执行互斥锁
 };
 
+/**
+ * @brief 主函数，解析命令行参数并启动视觉检测控制器
+ * @param argc 参数个数
+ * @param argv 参数数组
+ * @return int 正常退出返回 0，错误返回 -1
+ */
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cout << "Usage: " << argv[0] << " <onnx_model_path> [classes_file] [network_interface]" << std::endl;
-        std::cout << "Arguments:" << std::endl;
-        std::cout << "  1. onnx_model_path  : Path to ONNX model file (required)" << std::endl;
-        std::cout << "  2. classes_file     : Path to class names text file (optional)" << std::endl;
-        std::cout << "  3. network_interface: Network interface name, e.g., eth0, wlan0 (optional)" << std::endl;
+        std::cout << "用法: " << argv[0] << " <onnx_model_path> [classes_file] [network_interface]" << std::endl;
+        std::cout << "参数说明:" << std::endl;
+        std::cout << "  1. onnx_model_path  : ONNX 模型文件路径（必需）" << std::endl;
+        std::cout << "  2. classes_file     : 类别名称文本文件路径（可选）" << std::endl;
+        std::cout << "  3. network_interface: 网络接口名称，如 eth0、wlan0（可选）" << std::endl;
         std::cout << std::endl;
-        std::cout << "Examples:" << std::endl;
+        std::cout << "示例:" << std::endl;
         std::cout << "  " << argv[0] << " safety_signs.onnx classes.txt eth0" << std::endl;
         std::cout << "  " << argv[0] << " safety_signs.onnx classes.txt" << std::endl;
         std::cout << "  " << argv[0] << " safety_signs.onnx" << std::endl;
@@ -243,13 +289,12 @@ int main(int argc, char** argv) {
     std::string classesPath = (argc > 2) ? argv[2] : "";
     std::string netInterface = (argc > 3) ? argv[3] : "";
 
-    // Check if the third argument might be a network interface (not a file)
+    // 判断第三个参数是否为网络接口（而非类别文件）
+    // 规则：不带扩展名且以 eth/wlan/enp 开头则视为网络接口
     if (argc == 3) {
-        // Check if the second argument looks like a network interface, not a file
         std::string arg2 = argv[2];
         if (arg2.find('.') == std::string::npos &&
             (arg2.find("eth") == 0 || arg2.find("wlan") == 0 || arg2.find("enp") == 0)) {
-            // Likely a network interface, not a classes file
             classesPath = "";
             netInterface = arg2;
         }
@@ -259,7 +304,7 @@ int main(int argc, char** argv) {
         Go2VisionController controller(onnxModelPath, classesPath, netInterface);
         controller.run();
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "错误: " << e.what() << std::endl;
         return -1;
     }
 
